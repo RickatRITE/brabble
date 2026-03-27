@@ -5,7 +5,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"syscall"
 	"time"
 
 	"brabble/internal/config"
@@ -113,11 +112,7 @@ func NewStopCmd(cfgPath *string) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			proc, err := os.FindProcess(pid)
-			if err != nil {
-				return err
-			}
-			if err := proc.Signal(syscall.SIGTERM); err != nil {
+			if err := sendStopSignal(pid); err != nil {
 				return err
 			}
 			fmt.Println("stop signal sent")
@@ -150,12 +145,8 @@ func ensureNotRunning(cfg *config.Config) error {
 	if err != nil {
 		return nil
 	}
-	// Check if process alive.
-	proc, err := os.FindProcess(pid)
-	if err == nil {
-		if err := proc.Signal(syscall.Signal(0)); err == nil {
-			return fmt.Errorf("already running with pid %d", pid)
-		}
+	if isProcessAlive(pid) {
+		return fmt.Errorf("already running with pid %d", pid)
 	}
 	return nil
 }
@@ -184,12 +175,9 @@ func waitForShutdown(cfgPath string) error {
 		if err != nil {
 			return nil // pid file gone
 		}
-		proc, _ := os.FindProcess(pid)
-		if proc != nil {
-			if err := proc.Signal(syscall.Signal(0)); err != nil {
-				_ = os.Remove(cfg.Paths.PidPath)
-				return nil
-			}
+		if !isProcessAlive(pid) {
+			_ = os.Remove(cfg.Paths.PidPath)
+			return nil
 		}
 		time.Sleep(100 * time.Millisecond)
 	}

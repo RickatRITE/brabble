@@ -2,6 +2,8 @@ package hook
 
 import (
 	"context"
+	"os/exec"
+	"runtime"
 	"testing"
 	"time"
 
@@ -9,10 +11,33 @@ import (
 	"brabble/internal/logging"
 )
 
+// echoCmd returns a platform-appropriate echo command.
+func echoCmd() string {
+	if runtime.GOOS == "windows" {
+		if p, err := exec.LookPath("echo"); err == nil {
+			return p
+		}
+		return "cmd"
+	}
+	return "/bin/echo"
+}
+
+// echoArgs returns args that make the echo command work cross-platform.
+// On Windows, if using cmd, we wrap with /C echo.
+func echoArgs() []string {
+	if runtime.GOOS == "windows" {
+		if _, err := exec.LookPath("echo"); err != nil {
+			return []string{"/C", "echo"}
+		}
+	}
+	return []string{}
+}
+
 func TestShouldRunCooldown(t *testing.T) {
 	cfg, _ := config.Default()
 	cfg.Hooks = []config.HookConfig{{
-		Command:     "/bin/echo",
+		Command:     echoCmd(),
+		Args:        echoArgs(),
 		CooldownSec: 0.5,
 	}}
 	r := NewRunner(cfg, logging.NewTestLogger())
@@ -36,8 +61,8 @@ func TestShouldRunCooldown(t *testing.T) {
 func TestRunUsesPrefixAndEnv(t *testing.T) {
 	cfg, _ := config.Default()
 	cfg.Hooks = []config.HookConfig{{
-		Command: "/bin/echo",
-		Args:    []string{},
+		Command: echoCmd(),
+		Args:    echoArgs(),
 		Prefix:  "pref:",
 	}}
 

@@ -1,3 +1,5 @@
+//go:build darwin
+
 // Package service provides launchd plist generation for macOS.
 package service
 

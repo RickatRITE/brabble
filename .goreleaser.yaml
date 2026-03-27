@@ -6,7 +6,7 @@ changelog:
   disable: true
 
 builds:
-  - id: brabble
+  - id: brabble-darwin
     main: ./cmd/brabble
     binary: brabble
     env:
@@ -21,10 +21,27 @@ builds:
       post:
         - install_name_tool -add_rpath /usr/local/lib/whisper "{{ .Path }}" || true
 
+  - id: brabble-windows
+    main: ./cmd/brabble
+    binary: brabble
+    env:
+      - CGO_ENABLED=1
+      - CGO_CFLAGS={{ if index .Env "WHISPER_INC" }}-I{{ .Env.WHISPER_INC }}{{ else }}-IC:/whisper/include{{ end }}
+      - CGO_LDFLAGS={{ if index .Env "WHISPER_LIB" }}-L{{ .Env.WHISPER_LIB }}{{ else }}-LC:/whisper/lib{{ end }}
+    goos:
+      - windows
+    goarch:
+      - amd64
+
 archives:
   - builds:
-      - brabble
+      - brabble-darwin
     format: tar.gz
+    name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+  - id: windows
+    builds:
+      - brabble-windows
+    format: zip
     name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
 
 checksum:

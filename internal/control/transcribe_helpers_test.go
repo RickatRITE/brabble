@@ -69,6 +69,9 @@ func TestReadWAV16kMonoResamples(t *testing.T) {
 	if err := enc.Close(); err != nil {
 		t.Fatal(err)
 	}
+	if err := f.Close(); err != nil {
+		t.Fatal(err)
+	}
 	out, err := readWAV16kMono(tmp)
 	if err != nil {
 		t.Fatalf("read: %v", err)

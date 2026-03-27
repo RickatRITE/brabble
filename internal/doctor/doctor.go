@@ -3,6 +3,7 @@ package doctor
 import (
 	"os"
 	"os/exec"
+	"runtime"
 	"strings"
 
 	"brabble/internal/config"
@@ -21,7 +22,10 @@ func Run(cfg *config.Config) []Result {
 		checkFile("config path", cfg.Paths.ConfigPath),
 		checkFile("model file", cfg.ASR.ModelPath),
 		checkHookExecutable(cfg.Hook.Command),
-		checkPortAudioPkgConfig(),
+	}
+	// pkg-config check is Unix-only
+	if runtime.GOOS != "windows" {
+		results = append(results, checkPortAudioPkgConfig())
 	}
 	results = append(results, checkPortAudio(false))
 	return results
@@ -52,7 +56,8 @@ func checkHookExecutable(cmd string) Result {
 		if info.IsDir() {
 			return Result{Name: label, Pass: false, Detail: "is a directory; set hook.command to an executable file"}
 		}
-		if info.Mode().Perm()&0o111 == 0 {
+		// Unix permission check (Windows doesn't use file mode bits).
+		if runtime.GOOS != "windows" && info.Mode().Perm()&0o111 == 0 {
 			return Result{Name: label, Pass: false, Detail: "not executable; chmod +x or choose another command"}
 		}
 		return Result{Name: label, Pass: true, Detail: path}
@@ -68,11 +73,19 @@ func checkHookExecutable(cmd string) Result {
 func checkPortAudioPkgConfig() Result {
 	pkg, err := exec.LookPath("pkg-config")
 	if err != nil {
-		return Result{Name: "pkg-config", Pass: false, Detail: "pkg-config not found (brew install pkg-config)"}
+		hint := "brew install pkg-config"
+		if runtime.GOOS == "linux" {
+			hint = "apt-get install pkg-config (or equivalent)"
+		}
+		return Result{Name: "pkg-config", Pass: false, Detail: "pkg-config not found (" + hint + ")"}
 	}
 	cmd := exec.Command(pkg, "--exists", "portaudio-2.0")
 	if err := cmd.Run(); err != nil {
-		return Result{Name: "portaudio", Pass: false, Detail: "portaudio-2.0 not found (brew install portaudio)"}
+		hint := "brew install portaudio"
+		if runtime.GOOS == "linux" {
+			hint = "apt-get install libportaudio-dev (or equivalent)"
+		}
+		return Result{Name: "portaudio", Pass: false, Detail: "portaudio-2.0 not found (" + hint + ")"}
 	}
 	// Optional display version
 	versionCmd := exec.Command(pkg, "--modversion", "portaudio-2.0")

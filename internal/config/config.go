@@ -117,6 +117,14 @@ func Default() (*Config, error) {
 	if isMac() {
 		stateDir = filepath.Join(home, "Library", "Application Support", "brabble")
 	}
+	// Windows uses %LOCALAPPDATA%\brabble
+	if isWindows() {
+		if localAppData := os.Getenv("LOCALAPPDATA"); localAppData != "" {
+			stateDir = filepath.Join(localAppData, "brabble")
+		} else {
+			stateDir = filepath.Join(home, "AppData", "Local", "brabble")
+		}
+	}
 
 	cfg := &Config{}
 
@@ -164,8 +172,13 @@ func Default() (*Config, error) {
 	cfg.Paths.StateDir = stateDir
 	cfg.Paths.LogPath = filepath.Join(stateDir, "brabble.log")
 	cfg.Paths.TranscriptPath = filepath.Join(stateDir, "transcripts.log")
-	cfg.Paths.SocketPath = filepath.Join(stateDir, "brabble.sock")
 	cfg.Paths.PidPath = filepath.Join(stateDir, "brabble.pid")
+	// Windows Unix domain sockets have a short path limit; use temp dir.
+	if isWindows() {
+		cfg.Paths.SocketPath = filepath.Join(os.TempDir(), "brabble.sock")
+	} else {
+		cfg.Paths.SocketPath = filepath.Join(stateDir, "brabble.sock")
+	}
 
 	cfg.UI.StatusTail = defaultStatusTail
 
@@ -188,7 +201,15 @@ func Load(path string) (*Config, error) {
 
 	if path == "" {
 		home, _ := os.UserHomeDir()
-		path = filepath.Join(home, defaultConfigDir, "config.toml")
+		if isWindows() {
+			if appData := os.Getenv("APPDATA"); appData != "" {
+				path = filepath.Join(appData, "brabble", "config.toml")
+			} else {
+				path = filepath.Join(home, "AppData", "Roaming", "brabble", "config.toml")
+			}
+		} else {
+			path = filepath.Join(home, defaultConfigDir, "config.toml")
+		}
 	}
 
 	// Read if exists; otherwise write template.
@@ -230,6 +251,10 @@ func Save(cfg *Config, path string) error {
 
 func isMac() bool {
 	return runtime.GOOS == "darwin"
+}
+
+func isWindows() bool {
+	return runtime.GOOS == "windows"
 }
 
 // MustStatePaths ensures state dirs exist.

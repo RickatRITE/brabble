@@ -6,6 +6,7 @@ import (
 
 	"brabble/internal/control"
 	"brabble/internal/daemon"
+	"brabble/internal/tray"
 
 	"github.com/spf13/cobra"
 )
@@ -71,6 +72,7 @@ Notable flags/env:
 	root.AddCommand(control.NewHealthCmd(cfgPath))
 	root.AddCommand(control.NewTranscribeCmd(cfgPath))
 	root.AddCommand(control.NewModelsCmd(cfgPath))
+	root.AddCommand(tray.NewTrayCmd(cfgPath))
 
 	// Hidden internal serve command used by start.
 	root.AddCommand(daemon.NewServeCmd(cfgPath))

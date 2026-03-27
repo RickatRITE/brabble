@@ -70,8 +70,13 @@ func newMicListCmd() *cobra.Command {
 				}
 				fmt.Printf("[%d] %s%s (in %d ch, latency %.2fms)\n", m.Index, m.Name, defMark, m.Channels, m.LatencyMs)
 			}
-			if runtime.GOOS == "darwin" {
+			switch runtime.GOOS {
+			case "darwin":
 				fmt.Println("tip: if no devices appear, install PortAudio: brew install portaudio")
+			case "windows":
+				fmt.Println("tip: if no devices appear, ensure PortAudio DLL is in PATH or alongside the executable")
+			case "linux":
+				fmt.Println("tip: if no devices appear, install PortAudio: apt-get install libportaudio2")
 			}
 			return nil
 		},

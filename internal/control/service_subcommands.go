@@ -3,6 +3,7 @@ package control
 import (
 	"fmt"
 	"os"
+	"runtime"
 	"strings"
 
 	"brabble/internal/config"
@@ -16,6 +17,12 @@ func NewServiceRootCmd(cfgPath *string) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "service",
 		Short: "Manage launchd service (macOS)",
+		PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
+			if runtime.GOOS != "darwin" {
+				return fmt.Errorf("service management is only supported on macOS (launchd)")
+			}
+			return nil
+		},
 	}
 	cmd.AddCommand(newServiceInstallCmd(cfgPath))
 	cmd.AddCommand(newServiceUninstallCmd())

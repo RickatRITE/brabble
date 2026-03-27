@@ -12,7 +12,6 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
-	"syscall"
 	"time"
 
 	"brabble/internal/asr"
@@ -90,7 +89,7 @@ func Serve(cfg *config.Config, logger *logging.Logger) error {
 
 	// Handle signals
 	sigCh := make(chan os.Signal, 2)
-	signal.Notify(sigCh, syscall.SIGTERM, syscall.SIGINT)
+	signal.Notify(sigCh, stopSignals()...)
 	select {
 	case s := <-sigCh:
 		logger.Infof("received signal %s, shutting down", s)

@@ -40,8 +40,8 @@ func newModelsListCmd() *cobra.Command {
 		Use:   "list",
 		Short: "List known models and those present locally",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			home, _ := os.UserHomeDir()
-			modelDir := filepath.Join(home, "Library", "Application Support", "brabble", "models")
+			cfg, _ := config.Default()
+			modelDir := filepath.Join(cfg.Paths.StateDir, "models")
 			local := map[string]bool{}
 			entries, _ := os.ReadDir(modelDir)
 			for _, e := range entries {
@@ -77,8 +77,8 @@ func newModelsDownloadCmd(cfgPath *string) *cobra.Command {
 			if !ok {
 				return fmt.Errorf("unknown model %q; run models list", name)
 			}
-			home, _ := os.UserHomeDir()
-			dest := filepath.Join(home, "Library", "Application Support", "brabble", "models", name)
+			cfg, _ := config.Default()
+			dest := filepath.Join(cfg.Paths.StateDir, "models", name)
 			if err := os.MkdirAll(filepath.Dir(dest), 0o755); err != nil {
 				return err
 			}
@@ -119,10 +119,9 @@ func newModelsSetCmd(cfgPath *string) *cobra.Command {
 				return err
 			}
 			val := args[0]
-			home, _ := os.UserHomeDir()
-			modelDir := filepath.Join(home, "Library", "Application Support", "brabble", "models")
+			modelDir := filepath.Join(cfg.Paths.StateDir, "models")
 			// if short name, resolve in modelDir
-			if !strings.Contains(val, "/") {
+			if !strings.Contains(val, "/") && !strings.Contains(val, "\\") {
 				val = filepath.Join(modelDir, val)
 			}
 			cfg.ASR.ModelPath = val
