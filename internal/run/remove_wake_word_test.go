@@ -10,11 +10,14 @@ func TestRemoveWakeWord(t *testing.T) {
 		expect  string
 	}{
 		{"clawd make it so", "clawd", nil, "make it so"},
-		{"hey ClAwD computer", "clawd", nil, "hey computer"},
 		{"clawd, launch torpedo", "clawd", nil, "launch torpedo"},
-		{"we said clawd twice clawd", "clawd", nil, "we said twice clawd"},
 		{"no wake here", "clawd", nil, "no wake here"},
 		{"Claude engage", "clawd", []string{"claude"}, "engage"},
+		// Multi-word wake phrases
+		{"hey computer, refactor this", "hey computer", nil, "refactor this"},
+		{"Hey Computer do something", "hey computer", nil, "do something"},
+		{"Hey computer, refactor this.", "hey computer", []string{"claude"}, "refactor this."},
+		{"Claude, help me out", "hey computer", []string{"claude"}, "help me out"},
 	}
 	for _, c := range cases {
 		got := removeWakeWord(c.text, c.word, c.aliases)

@@ -142,6 +142,10 @@ func (s *Server) handleSegment(ctx context.Context, seg asr.Segment) {
 		}
 		s.logger.Infof("wake word matched: %q", s.cfg.Wake.Word)
 		text = removeWakeWord(text, s.cfg.Wake.Word, s.cfg.Wake.Aliases)
+		// Capitalize first letter since the wake word was at the start.
+		if len(text) > 0 {
+			text = strings.ToUpper(text[:1]) + text[1:]
+		}
 	}
 	// Select hook based on wake tokens (first match wins).
 	hk, idx := hook.SelectHookConfig(s.cfg, original)
@@ -179,17 +183,19 @@ func (s *Server) handleSegment(ctx context.Context, seg asr.Segment) {
 
 func removeWakeWord(text, word string, aliases []string) string {
 	variants := wakeVariants(word, aliases)
-	fields := strings.Fields(text)
-	out := make([]string, 0, len(fields))
-	skipped := false
-	for _, f := range fields {
-		if !skipped && matchesAny(stripPunct(f), variants) {
-			skipped = true
-			continue
+	lower := strings.ToLower(text)
+	// Try multi-word variants first (longest match wins).
+	for _, v := range variants {
+		if idx := strings.Index(lower, v); idx >= 0 {
+			// Remove the variant and any trailing comma/space.
+			after := text[idx+len(v):]
+			after = strings.TrimLeft(after, " ,;:!?\"'")
+			before := text[:idx]
+			text = strings.TrimSpace(before + after)
+			break
 		}
-		out = append(out, f)
 	}
-	return strings.Join(out, " ")
+	return strings.TrimSpace(text)
 }
 
 func stripPunct(s string) string {

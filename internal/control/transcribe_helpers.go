@@ -9,18 +9,15 @@ import (
 )
 
 func removeWakeWordLocal(text, word string) string {
+	lower := strings.ToLower(text)
 	lw := strings.ToLower(word)
-	fields := strings.Fields(text)
-	out := make([]string, 0, len(fields))
-	skipped := false
-	for _, f := range fields {
-		if !skipped && strings.EqualFold(strings.Trim(f, " ,.!?;:\"'"), lw) {
-			skipped = true
-			continue
-		}
-		out = append(out, f)
+	if idx := strings.Index(lower, lw); idx >= 0 {
+		after := text[idx+len(lw):]
+		after = strings.TrimLeft(after, " ,;:!?\"'")
+		before := text[:idx]
+		text = strings.TrimSpace(before + after)
 	}
-	return strings.Join(out, " ")
+	return strings.TrimSpace(text)
 }
 
 func resampleLinear(in []float32, srcSR, dstSR int) []float32 {

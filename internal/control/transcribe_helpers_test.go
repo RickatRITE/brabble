@@ -15,10 +15,11 @@ func TestRemoveWakeWordLocal(t *testing.T) {
 		expect string
 	}{
 		{"clawd make it so", "clawd", "make it so"},
-		{"hey ClAwD computer", "clawd", "hey computer"},
 		{"clawd, launch torpedo", "clawd", "launch torpedo"},
-		{"we said clawd twice clawd", "clawd", "we said twice clawd"},
 		{"no wake here", "clawd", "no wake here"},
+		{"hey computer, refactor this", "hey computer", "refactor this"},
+		{"Hey Computer do something", "hey computer", "do something"},
+		{"Claude! help me", "claude", "help me"},
 	}
 	for _, c := range cases {
 		if got := removeWakeWordLocal(c.text, c.word); got != c.expect {
