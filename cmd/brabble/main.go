@@ -73,6 +73,7 @@ Notable flags/env:
 	root.AddCommand(control.NewTranscribeCmd(cfgPath))
 	root.AddCommand(control.NewModelsCmd(cfgPath))
 	root.AddCommand(tray.NewTrayCmd(cfgPath))
+	root.AddCommand(tray.NewDebugMonitorCmd())
 
 	// Hidden internal serve command used by start.
 	root.AddCommand(daemon.NewServeCmd(cfgPath))

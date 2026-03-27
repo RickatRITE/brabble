@@ -11,6 +11,8 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"syscall"
+	"unsafe"
 	"time"
 
 	"brabble/internal/config"
@@ -74,6 +76,7 @@ func onReady(cfg *config.Config) {
 
 	// ── Utilities ──
 	systray.AddSeparator()
+	mDebug := systray.AddMenuItem("Debug Monitor", "Show always-on-top audio debug window")
 	mOpenConfig := systray.AddMenuItem("Open Config…", "Open config file in editor")
 	mOpenLog := systray.AddMenuItem("Open Log…", "Open log file in editor")
 
@@ -101,6 +104,8 @@ func onReady(cfg *config.Config) {
 			go runBrabble("stop")
 		case <-mRestart.ClickedCh:
 			go runBrabble("restart")
+		case <-mDebug.ClickedCh:
+			go launchDebugMonitor()
 		case <-mOpenConfig.ClickedCh:
 			go openFile(cfg.Paths.ConfigPath)
 		case <-mOpenLog.ClickedCh:
@@ -191,12 +196,11 @@ func handleDoctorFix(cfg *config.Config, item *doctorItem, mDoctor *systray.Menu
 
 	switch item.result.Name {
 	case "model file":
-		// Download the default whisper model
-		item.menuItem.SetTitle("✗ model file — downloading…")
-		item.menuItem.Disable()
+		notify("Brabble", "Downloading whisper model (~1.5 GB)… this may take a few minutes.")
+		systray.SetTooltip("Brabble — downloading model…")
 		if err := downloadModel(cfg); err != nil {
-			item.menuItem.SetTitle(fmt.Sprintf("✗ model file — download failed: %s  → Download model", truncate(err.Error(), 30)))
-			item.menuItem.Enable()
+			notify("Brabble — Download Failed", err.Error())
+			systray.SetTooltip("Brabble — model download failed")
 			return
 		}
 		// Reload config and refresh
@@ -205,27 +209,68 @@ func handleDoctorFix(cfg *config.Config, item *doctorItem, mDoctor *systray.Menu
 			*cfg = *newCfg
 		}
 		refreshDoctor(cfg, mDoctor, allItems)
+		notify("Brabble — Model Ready", "Whisper model downloaded successfully. You can now start the daemon.")
 
 	case "hook.command":
-		// Open config file so user can set hook.command
+		notify("Brabble — Config", "Opening config file. Add a [hook] section, e.g.:\n\n[hook]\ncommand = \"cmd\"\nargs = [\"/C\", \"echo\"]")
 		openFile(cfg.Paths.ConfigPath)
 
 	case "config path":
-		// Create default config
 		if err := config.Save(cfg, cfg.Paths.ConfigPath); err == nil {
 			refreshDoctor(cfg, mDoctor, allItems)
+			notify("Brabble", "Default config created at:\n"+cfg.Paths.ConfigPath)
+		} else {
+			notify("Brabble — Error", "Failed to create config: "+err.Error())
 		}
 
 	case "portaudio", "pkg-config":
 		showInstallGuide(item.result.Name)
 
 	default:
-		// Generic: show detail in a text file
 		tmp := os.TempDir() + `\brabble-doctor-detail.txt`
 		detail := fmt.Sprintf("Check: %s\r\nStatus: FAIL\r\nDetail: %s\r\n", item.result.Name, item.result.Detail)
 		_ = os.WriteFile(tmp, []byte(detail), 0o644)
 		openFile(tmp)
 	}
+}
+
+// notify shows a native Windows toast notification (or prints on other platforms).
+func notify(title, message string) {
+	if runtime.GOOS == "windows" {
+		// Use PowerShell to show a Windows toast notification.
+		// Escape single quotes in message/title for PowerShell string literals.
+		safeTitle := escapePS(title)
+		safeMsg := escapePS(message)
+		script := fmt.Sprintf(
+			`[Windows.UI.Notifications.ToastNotificationManager, Windows.UI.Notifications, ContentType = WindowsRuntime] | Out-Null; `+
+				`$t = [Windows.UI.Notifications.ToastNotificationManager]::GetTemplateContent([Windows.UI.Notifications.ToastTemplateType]::ToastText02); `+
+				`$n = $t.GetElementsByTagName('text'); `+
+				`$n.Item(0).AppendChild($t.CreateTextNode('%s')) | Out-Null; `+
+				`$n.Item(1).AppendChild($t.CreateTextNode('%s')) | Out-Null; `+
+				`$toast = [Windows.UI.Notifications.ToastNotification]::new($t); `+
+				`[Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier('Brabble').Show($toast)`,
+			safeTitle, safeMsg)
+		_ = exec.Command("powershell", "-WindowStyle", "Hidden", "-Command", script).Start()
+	} else {
+		fmt.Printf("[%s] %s\n", title, message)
+	}
+}
+
+func launchDebugMonitor() {
+	go RunDebugMonitor()
+}
+
+func escapePS(s string) string {
+	// Escape single quotes for PowerShell single-quoted-like context inside fmt.
+	result := ""
+	for _, c := range s {
+		if c == '\'' {
+			result += "''"
+		} else {
+			result += string(c)
+		}
+	}
+	return result
 }
 
 // downloadModel downloads the default whisper model (same logic as setup command).
@@ -368,7 +413,11 @@ func openFile(path string) {
 	}
 	switch runtime.GOOS {
 	case "windows":
-		_ = exec.Command("cmd", "/C", "start", "", path).Start()
+		shell32 := syscall.NewLazyDLL("shell32.dll")
+		shellExecute := shell32.NewProc("ShellExecuteW")
+		verb, _ := syscall.UTF16PtrFromString("open")
+		file, _ := syscall.UTF16PtrFromString(path)
+		shellExecute.Call(0, uintptr(unsafe.Pointer(verb)), uintptr(unsafe.Pointer(file)), 0, 0, 1)
 	case "darwin":
 		_ = exec.Command("open", path).Start()
 	default:

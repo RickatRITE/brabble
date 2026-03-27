@@ -22,3 +22,15 @@ func NewTrayCmd(cfgPath *string) *cobra.Command {
 		},
 	}
 }
+
+// NewDebugMonitorCmd returns the cobra command for the debug overlay window.
+func NewDebugMonitorCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:    "debug-monitor",
+		Short:  "Show always-on-top audio debug window",
+		Hidden: true,
+		Run: func(cmd *cobra.Command, args []string) {
+			RunDebugMonitor()
+		},
+	}
+}

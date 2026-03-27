@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"math"
+	"os"
 	"strings"
 	"time"
 	"unsafe"
@@ -155,11 +156,15 @@ func (r *whisperRecognizer) captureLoop(ctx context.Context, stream *portaudio.S
 			}
 			return fmt.Errorf("stream read: %w", err)
 		}
+		db := rmsDbFS(buf)
 		active, err := r.vad.Process(r.cfg.Audio.SampleRate, int16ToBytes(buf))
 		if err != nil {
 			r.logger.Warnf("vad process: %v", err)
 			continue
 		}
+
+		// Write live debug state for the tray debug window.
+		writeDebugState(db, active, inSpeech, len(chunk)/sampleRate)
 
 		if active {
 			if !inSpeech {
@@ -232,7 +237,8 @@ func (r *whisperRecognizer) transcribeWorker(ctx context.Context, segs <-chan se
 				r.logger.Errorf("transcribe: %v", err)
 				continue
 			}
-			if strings.TrimSpace(text) == "" {
+			text = strings.TrimSpace(text)
+			if text == "" || isHallucination(text) {
 				continue
 			}
 			seg := Segment{
@@ -343,6 +349,57 @@ func skipForEnergy(pcm []int16, threshDb float64) bool {
 	}
 	db := rmsDbFS(pcm)
 	return db < threshDb
+}
+
+// isHallucination returns true for known whisper phantom outputs that appear
+// when the model processes near-silence or background noise.
+func isHallucination(text string) bool {
+	// Normalize: lowercase, strip punctuation and whitespace
+	t := strings.ToLower(strings.TrimSpace(text))
+	t = strings.Trim(t, ".,!?…。、")
+	t = strings.TrimSpace(t)
+
+	hallucinations := []string{
+		"thank you",
+		"thanks",
+		"thanks for watching",
+		"thank you for watching",
+		"okay",
+		"ok",
+		"bye",
+		"goodbye",
+		"you",
+		"so",
+		"the end",
+		"hmm",
+		"uh",
+		"um",
+		// Common non-English hallucinations
+		"спасибо",            // Russian "thank you"
+		"продолжение следует", // Russian "to be continued"
+		"подписывайтесь",     // Russian "subscribe"
+		"sous-titres",        // French "subtitles"
+		"sottotitoli",        // Italian "subtitles"
+		"untertitel",         // German "subtitles"
+		"字幕",               // Chinese/Japanese "subtitles"
+		"ご視聴ありがとうございました",  // Japanese "thank you for watching"
+	}
+
+	for _, h := range hallucinations {
+		if t == h {
+			return true
+		}
+	}
+	return false
+}
+
+// writeDebugState writes a small JSON file that the tray debug window reads.
+func writeDebugState(db float64, vadActive, inSpeech bool, chunkSec int) {
+	stateDir := os.TempDir()
+	path := stateDir + string(os.PathSeparator) + "brabble-debug.json"
+	data := fmt.Sprintf(`{"db":%.1f,"vad":%t,"speech":%t,"chunk_sec":%d,"ts":"%s"}`,
+		db, vadActive, inSpeech, chunkSec, time.Now().Format("15:04:05"))
+	_ = os.WriteFile(path, []byte(data), 0o644)
 }
 
 func rmsDbFS(pcm []int16) float64 {
