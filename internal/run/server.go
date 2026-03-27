@@ -157,9 +157,11 @@ func (s *Server) handleSegment(ctx context.Context, seg asr.Segment) {
 	s.logger.Infof("hook selected: #%d cmd=%q", idx, hk.Command)
 
 	if seg.Partial {
+		s.logger.Debug("skipping partial segment")
 		return
 	}
 	if hk.MinChars > 0 && len(text) < hk.MinChars {
+		s.logger.Debugf("skipping: text %q (%d chars) below min_chars %d", text, len(text), hk.MinChars)
 		return
 	}
 
