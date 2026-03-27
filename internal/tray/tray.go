@@ -4,14 +4,18 @@ package tray
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"net"
+	"net/http"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"runtime"
 	"time"
 
 	"brabble/internal/config"
 	"brabble/internal/control"
+	"brabble/internal/doctor"
 
 	"fyne.io/systray"
 )
@@ -19,6 +23,12 @@ import (
 // Run launches the system tray icon and blocks until quit.
 func Run(cfg *config.Config) {
 	systray.Run(func() { onReady(cfg) }, func() {})
+}
+
+// doctorItem pairs a check result with its menu item and fix action.
+type doctorItem struct {
+	menuItem *systray.MenuItem
+	result   doctor.Result
 }
 
 func onReady(cfg *config.Config) {
@@ -50,10 +60,22 @@ func onReady(cfg *config.Config) {
 
 	systray.AddSeparator()
 
+	// ── Doctor submenu (actionable checks) ──
+	mDoctor := systray.AddMenuItem("Doctor: checking…", "Dependency and config checks")
+	mDoctorRefresh := mDoctor.AddSubMenuItem("↻ Refresh checks", "Re-run all checks")
+	mDoctor.AddSubMenuItem("", "")  // visual separator
+	// Pre-allocate slots for check results
+	const maxChecks = 8
+	doctorItems := make([]doctorItem, maxChecks)
+	for i := range doctorItems {
+		doctorItems[i].menuItem = mDoctor.AddSubMenuItem("", "")
+		doctorItems[i].menuItem.Hide()
+	}
+
 	// ── Utilities ──
+	systray.AddSeparator()
 	mOpenConfig := systray.AddMenuItem("Open Config…", "Open config file in editor")
 	mOpenLog := systray.AddMenuItem("Open Log…", "Open log file in editor")
-	mDoctor := systray.AddMenuItem("Run Doctor", "Check dependencies")
 
 	systray.AddSeparator()
 
@@ -63,6 +85,9 @@ func onReady(cfg *config.Config) {
 	systray.AddSeparator()
 
 	mQuit := systray.AddMenuItem("Quit Tray", "Close tray icon (daemon keeps running)")
+
+	// ── Initial doctor check ──
+	refreshDoctor(cfg, mDoctor, doctorItems[:])
 
 	// ── Background status poller ──
 	go pollStatus(cfg, mStatus, transcriptItems)
@@ -80,15 +105,199 @@ func onReady(cfg *config.Config) {
 			go openFile(cfg.Paths.ConfigPath)
 		case <-mOpenLog.ClickedCh:
 			go openFile(cfg.Paths.LogPath)
-		case <-mDoctor.ClickedCh:
-			go runBrabbleVisible("doctor")
+		case <-mDoctorRefresh.ClickedCh:
+			go refreshDoctor(cfg, mDoctor, doctorItems[:])
 		case <-mHelp.ClickedCh:
 			go showHelp()
 		case <-mQuit.ClickedCh:
 			systray.Quit()
 			return
+
+		// Doctor fix actions — clicking a failed check triggers its fix
+		case <-doctorItems[0].menuItem.ClickedCh:
+			go handleDoctorFix(cfg, &doctorItems[0], mDoctor, doctorItems[:])
+		case <-doctorItems[1].menuItem.ClickedCh:
+			go handleDoctorFix(cfg, &doctorItems[1], mDoctor, doctorItems[:])
+		case <-doctorItems[2].menuItem.ClickedCh:
+			go handleDoctorFix(cfg, &doctorItems[2], mDoctor, doctorItems[:])
+		case <-doctorItems[3].menuItem.ClickedCh:
+			go handleDoctorFix(cfg, &doctorItems[3], mDoctor, doctorItems[:])
+		case <-doctorItems[4].menuItem.ClickedCh:
+			go handleDoctorFix(cfg, &doctorItems[4], mDoctor, doctorItems[:])
+		case <-doctorItems[5].menuItem.ClickedCh:
+			go handleDoctorFix(cfg, &doctorItems[5], mDoctor, doctorItems[:])
+		case <-doctorItems[6].menuItem.ClickedCh:
+			go handleDoctorFix(cfg, &doctorItems[6], mDoctor, doctorItems[:])
+		case <-doctorItems[7].menuItem.ClickedCh:
+			go handleDoctorFix(cfg, &doctorItems[7], mDoctor, doctorItems[:])
 		}
 	}
+}
+
+// refreshDoctor runs checks and updates the doctor submenu.
+func refreshDoctor(cfg *config.Config, mDoctor *systray.MenuItem, items []doctorItem) {
+	results := doctor.Run(cfg)
+	failures := 0
+	for i := range items {
+		if i < len(results) {
+			r := results[i]
+			items[i].result = r
+			if r.Pass {
+				items[i].menuItem.SetTitle(fmt.Sprintf("✓ %s — %s", r.Name, truncate(r.Detail, 50)))
+				items[i].menuItem.SetTooltip("Check passed")
+				items[i].menuItem.Disable()
+			} else {
+				failures++
+				fix := fixLabel(r.Name)
+				items[i].menuItem.SetTitle(fmt.Sprintf("✗ %s — %s  → %s", r.Name, truncate(r.Detail, 40), fix))
+				items[i].menuItem.SetTooltip("Click to fix: " + fix)
+				items[i].menuItem.Enable()
+			}
+			items[i].menuItem.Show()
+		} else {
+			items[i].menuItem.Hide()
+		}
+	}
+	if failures == 0 {
+		mDoctor.SetTitle("Doctor: all checks passed ✓")
+	} else {
+		mDoctor.SetTitle(fmt.Sprintf("Doctor: %d issue(s) found", failures))
+	}
+}
+
+// fixLabel returns a short action description for a failed check.
+func fixLabel(checkName string) string {
+	switch checkName {
+	case "model file":
+		return "Download model"
+	case "hook.command":
+		return "Open config"
+	case "config path":
+		return "Create config"
+	case "portaudio":
+		return "Show install guide"
+	case "pkg-config":
+		return "Show install guide"
+	default:
+		return "Show details"
+	}
+}
+
+// handleDoctorFix runs the appropriate fix for a failed check.
+func handleDoctorFix(cfg *config.Config, item *doctorItem, mDoctor *systray.MenuItem, allItems []doctorItem) {
+	if item.result.Pass {
+		return
+	}
+
+	switch item.result.Name {
+	case "model file":
+		// Download the default whisper model
+		item.menuItem.SetTitle("✗ model file — downloading…")
+		item.menuItem.Disable()
+		if err := downloadModel(cfg); err != nil {
+			item.menuItem.SetTitle(fmt.Sprintf("✗ model file — download failed: %s  → Download model", truncate(err.Error(), 30)))
+			item.menuItem.Enable()
+			return
+		}
+		// Reload config and refresh
+		newCfg, _ := config.Load(cfg.Paths.ConfigPath)
+		if newCfg != nil {
+			*cfg = *newCfg
+		}
+		refreshDoctor(cfg, mDoctor, allItems)
+
+	case "hook.command":
+		// Open config file so user can set hook.command
+		openFile(cfg.Paths.ConfigPath)
+
+	case "config path":
+		// Create default config
+		if err := config.Save(cfg, cfg.Paths.ConfigPath); err == nil {
+			refreshDoctor(cfg, mDoctor, allItems)
+		}
+
+	case "portaudio", "pkg-config":
+		showInstallGuide(item.result.Name)
+
+	default:
+		// Generic: show detail in a text file
+		tmp := os.TempDir() + `\brabble-doctor-detail.txt`
+		detail := fmt.Sprintf("Check: %s\r\nStatus: FAIL\r\nDetail: %s\r\n", item.result.Name, item.result.Detail)
+		_ = os.WriteFile(tmp, []byte(detail), 0o644)
+		openFile(tmp)
+	}
+}
+
+// downloadModel downloads the default whisper model (same logic as setup command).
+func downloadModel(cfg *config.Config) error {
+	name := "ggml-large-v3-turbo-q8_0.bin"
+	url := "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-large-v3-turbo-q8_0.bin"
+	modelPath := filepath.Join(cfg.Paths.StateDir, "models", name)
+
+	if err := os.MkdirAll(filepath.Dir(modelPath), 0o755); err != nil {
+		return err
+	}
+	if _, err := os.Stat(modelPath); err == nil {
+		// Already present — just update config
+		cfg.ASR.ModelPath = modelPath
+		return config.Save(cfg, cfg.Paths.ConfigPath)
+	}
+
+	resp, err := http.Get(url)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != 200 {
+		return fmt.Errorf("HTTP %s", resp.Status)
+	}
+
+	tmp := modelPath + ".part"
+	out, err := os.Create(tmp)
+	if err != nil {
+		return err
+	}
+	defer out.Close()
+	if _, err := io.Copy(out, resp.Body); err != nil {
+		return err
+	}
+	if err := out.Close(); err != nil {
+		return err
+	}
+	if err := os.Rename(tmp, modelPath); err != nil {
+		return err
+	}
+
+	cfg.ASR.ModelPath = modelPath
+	return config.Save(cfg, cfg.Paths.ConfigPath)
+}
+
+func showInstallGuide(check string) {
+	var guide string
+	switch check {
+	case "portaudio":
+		switch runtime.GOOS {
+		case "darwin":
+			guide = "Install PortAudio:\r\n\r\n  brew install portaudio\r\n"
+		case "windows":
+			guide = "PortAudio for Windows:\r\n\r\n" +
+				"If using MSYS2/MinGW:\r\n" +
+				"  pacman -S mingw-w64-x86_64-portaudio\r\n\r\n" +
+				"Ensure the PortAudio DLL is in your PATH or next to brabble.exe.\r\n"
+		default:
+			guide = "Install PortAudio:\r\n\r\n  sudo apt-get install libportaudio2 libportaudio-dev\r\n"
+		}
+	case "pkg-config":
+		guide = "Install pkg-config:\r\n\r\n"
+		if runtime.GOOS == "darwin" {
+			guide += "  brew install pkg-config\r\n"
+		} else {
+			guide += "  sudo apt-get install pkg-config\r\n"
+		}
+	}
+	tmp := os.TempDir() + `\brabble-install-guide.txt`
+	_ = os.WriteFile(tmp, []byte(guide), 0o644)
+	openFile(tmp)
 }
 
 // pollStatus periodically queries the daemon and updates tray state.
@@ -109,7 +318,6 @@ func pollStatus(cfg *config.Config, mStatus *systray.MenuItem, transcriptItems [
 			mStatus.SetTooltip("Daemon is running")
 			systray.SetTooltip(fmt.Sprintf("Brabble — running %s", uptime))
 
-			// Fill transcript slots (most recent first)
 			for i := range transcriptItems {
 				idx := len(status.Transcripts) - 1 - i
 				if idx >= 0 {
@@ -154,25 +362,6 @@ func runBrabble(args ...string) {
 	_ = cmd.Run()
 }
 
-func runBrabbleVisible(args ...string) {
-	self, err := os.Executable()
-	if err != nil {
-		return
-	}
-	// On Windows, open a visible console window so the user can see output.
-	if runtime.GOOS == "windows" {
-		cmdArgs := append([]string{"/C", self}, args...)
-		cmdArgs = append(cmdArgs, "& pause")
-		cmd := exec.Command("cmd", cmdArgs...)
-		_ = cmd.Start()
-		return
-	}
-	cmd := exec.Command(self, args...)
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	_ = cmd.Run()
-}
-
 func openFile(path string) {
 	if path == "" {
 		return
@@ -196,9 +385,9 @@ func showHelp() {
   Right-click          Open this menu
   Start / Stop / Restart   Control the daemon
   Recent Transcripts   Last 5 things heard
-  Open Config…         Edit ~/.config/brabble/config.toml
+  Doctor               Check deps — click failures to fix
+  Open Config…         Edit config.toml
   Open Log…            View daemon log
-  Run Doctor           Check deps & config
   Quit Tray            Close tray (daemon keeps running)
 
   CLI COMMANDS
@@ -246,10 +435,9 @@ func showHelp() {
 `
 
 	if runtime.GOOS == "windows" {
-		// Write to a temp file and open it so it's readable
-		tmp := os.TempDir() + "/brabble-help.txt"
+		tmp := os.TempDir() + `\brabble-help.txt`
 		_ = os.WriteFile(tmp, []byte(help), 0o644)
-		_ = exec.Command("cmd", "/C", "start", "", tmp).Start()
+		openFile(tmp)
 	} else {
 		fmt.Print(help)
 	}
